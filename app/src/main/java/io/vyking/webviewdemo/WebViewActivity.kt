@@ -235,7 +235,7 @@ class WebViewActivity : AppCompatActivity() {
 
     private fun vykingConfigure(config: String, key: String, resultCallback: ((String) -> Unit)?) {
         vykingWebView?.evaluateJavascript("""
-        document.querySelector('vyking-apparel')?.setAttribute('key', '${key}');
+        document.querySelector('vyking-apparel')?.setAttribute('key-key', '${key}');
         document.querySelector('vyking-apparel')?.setAttribute('config', '${config}');
 
         document.querySelector('model-viewer')?.setAttribute('vto', true);
