@@ -26,6 +26,11 @@ class WebViewInterface(private val activity: WebViewActivity, private val button
             button.apply {
                 setVisibility(View.VISIBLE)
             }
+            activity.apply {
+                binding.container.removeView(preWarmTensorflowModelWebView)
+                preWarmTensorflowModelWebView?.destroy()
+                preWarmTensorflowModelWebView = null
+            }
         }
     }
 }
@@ -35,13 +40,21 @@ class WebViewActivity : AppCompatActivity() {
 
     lateinit var binding: ActivityWebviewBinding
     private var vykingWebView: WebView? = null
+    var preWarmTensorflowModelWebView: WebView? = null
 
     private val key = "io.vyking"
     private val config = "https://sneaker-window.vyking.io/vyking-examples/vanilla/assets/config/modeld.foot.config"
+    private val vykingApparelNeedsPrewarming = false
     private var isPreWarmOfTensorflowModelComplete: Boolean = false
 
-    private val vykingApparelUrl = "https://sneaker-window.vyking.io/vyking-examples/with-service-worker/examples/in-app-vyking-apparel-camera.html"
-    private val modelViewerUrl   = "https://sneaker-window.vyking.io/vyking-examples/with-service-worker/examples/in-app-model-viewer.html"
+//    private val vykingApparelUrl = "https://sneaker-window.vyking.io/vyking-examples/with-service-worker/examples/in-app-vyking-apparel-camera.html"
+    private val vykingApparelUrl = "https://sneaker-window.vyking.io/vyking-examples/vanilla/examples/in-app-vyking-apparel-camera.html"
+
+//    private val modelViewerUrl   = "https://sneaker-window.vyking.io/vyking-examples/with-service-worker/examples/in-app-model-viewer.html"
+    private val modelViewerUrl   = "https://sneaker-window.vyking.io/vyking-examples/vanilla/examples/in-app-model-viewer.html"
+
+//    private val preWarmTensorflowModelUrl = "https://sneaker-window.vyking.io/vyking-examples/with-service-worker/examples/in-app-preWarmTensorflowModel.html"
+    private val preWarmTensorflowModelUrl = "https://sneaker-window.vyking.io/vyking-examples/vanilla/examples/in-app-preWarmTensorflowModel.html"
 
     enum class ViewMode {
         vykingApparel,
@@ -96,7 +109,9 @@ class WebViewActivity : AppCompatActivity() {
             viewModeToggle.apply {
                 // Keep this button hidden until the pre-warming of the Tensorflow model has completed.
                 // This will occur during the presentation of the model-viewer WKWebView.
-                setVisibility(View.INVISIBLE)
+                if (vykingApparelNeedsPrewarming) {
+                    setVisibility(View.INVISIBLE)
+                }
 
                 setOnClickListener {
                     viewMode = when (viewMode) {
@@ -115,6 +130,12 @@ class WebViewActivity : AppCompatActivity() {
                         Manifest.permission.CAMERA
                 ) == PackageManager.PERMISSION_GRANTED
         ) {
+            if (vykingApparelNeedsPrewarming) {
+                // Create a WebView for running the Tensorflow Model pre-warm script in.
+                addVykingWebView(true)
+            }
+
+            // Create the WebView for running the model-viewer in.
             addVykingWebView()
         } else {
             ActivityCompat.requestPermissions(
@@ -134,6 +155,11 @@ class WebViewActivity : AppCompatActivity() {
 
         when (requestCode) {
             MY_PERMISSIONS_REQUEST_USE_CAMERA -> if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (vykingApparelNeedsPrewarming) {
+                    addVykingWebView(true)
+                }
+
+                // Create the WebView for running the model-viewer in.
                 addVykingWebView()
             } else {
                 Toast.makeText(
@@ -147,8 +173,10 @@ class WebViewActivity : AppCompatActivity() {
         }
     }
 
-    private fun addVykingWebView() {
-        vykingWebView = WebView(this).apply {
+    private fun addVykingWebView(isForPreWarmOfTensorflowModel: Boolean = false) {
+        Log.d(tag("addVykingWebView"), "isForPreWarmOfTensorflowModel: ${isForPreWarmOfTensorflowModel} ")
+
+        val webView = WebView(this).apply {
             this.setBackgroundColor(Color.TRANSPARENT)
             this.settings.javaScriptEnabled = true
             this.settings.mediaPlaybackRequiresUserGesture = false
@@ -174,7 +202,7 @@ class WebViewActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     Log.d(tag("addVykingWebView.onPageFinished"), "onPageFinished")
 
-                    vykingConfigure(config, key) {
+                    vykingConfigure(view, config, key) {
                         vykingReplaceApparel(shoeList[shoeSelector][1], shoeList[shoeSelector][0], null)
                     }
                 }
@@ -211,21 +239,27 @@ class WebViewActivity : AppCompatActivity() {
                 }
             }
 
-            // Add a function that can be called when pre-warming the Tensorfow model completes
-            val preWarmTensorflowModelCompletionInterface = WebViewInterface(this@WebViewActivity, binding.viewModeToggle)
-            this.addJavascriptInterface(preWarmTensorflowModelCompletionInterface, "NativeAndroid")
+            if (isForPreWarmOfTensorflowModel) {
+                // Add a function that can be called when pre-warming the Tensorfow model completes
+                val preWarmTensorflowModelCompletionInterface = WebViewInterface(this@WebViewActivity, binding.viewModeToggle)
+                this.addJavascriptInterface(preWarmTensorflowModelCompletionInterface, "NativeAndroid")
 
-            try {
-                Log.d(tag("addVykingWebView"), "url. $modelViewerUrl")
+                // We need to load an html page suitable for running our pre-warm javascript, so we use a url that points to a
+                // minimal html page (note that about:blank is not good enough as it only seems to do about half of the warmup).
+                this.loadUrl(preWarmTensorflowModelUrl)
+            } else {
+                try {
+                    Log.d(tag("addVykingWebView"), "url. $modelViewerUrl")
 
-                val url = when (viewMode) {
-                    ViewMode.vykingApparel -> vykingApparelUrl
-                    ViewMode.modelViewer -> modelViewerUrl
+                    val url = when (viewMode) {
+                        ViewMode.vykingApparel -> vykingApparelUrl
+                        ViewMode.modelViewer -> modelViewerUrl
+                    }
+
+                    this.loadUrl(url)
+                } catch (cause: Exception) {
+                    Log.e(tag("addVykingWebView"), "Failed to initialise WebView. $cause")
                 }
-
-                this.loadUrl(url)
-            } catch (cause: Exception) {
-                Log.e(tag("addVykingWebView"), "Failed to initialise WebView. $cause")
             }
         }
 
@@ -237,7 +271,7 @@ class WebViewActivity : AppCompatActivity() {
                 layout.bottomToBottom = getId()
                 layout.endToEnd = getId()
 
-                this.addView(vykingWebView, layout)
+                this.addView(webView, layout)
 
                 val label = when(viewMode) {
                     ViewMode.vykingApparel -> "View Model"
@@ -245,6 +279,13 @@ class WebViewActivity : AppCompatActivity() {
                 }
                 binding.viewModeToggle.text = label
             }
+        }
+
+        if (isForPreWarmOfTensorflowModel) {
+            webView.setVisibility(View.INVISIBLE)
+            preWarmTensorflowModelWebView = webView
+        } else {
+            vykingWebView = webView
         }
     }
 
@@ -256,18 +297,14 @@ class WebViewActivity : AppCompatActivity() {
         }
     }
 
-    private fun vykingConfigure(config: String, key: String, resultCallback: ((String) -> Unit)?) {
-        vykingWebView?.evaluateJavascript("""
-        document.querySelector('vyking-apparel')?.setAttribute('config-key', '${key}');
-        document.querySelector('vyking-apparel')?.setAttribute('config', '${config}');
-      """.trimIndent(), resultCallback)
-
-        // It can take a long time to compile the Tensorflow model's shaders, therefore we provide a javascript that can be run to do this before
-        // the VTO is required. This typically only needs to be done the first time the app launched after installation and after a device restart,
+    private fun vykingConfigure(webView: WebView?, config: String, key: String, resultCallback: ((String) -> Unit)?) {
+        // If vyking-apparel is configured to use Tensorflow's WebGL, it can take a long time to compile the Tensorflow model's shaders the first time, therefore
+        // we provide a javascript that can be run to do this before the VTO is required.
+        // This typically only needs to be done the first time the app is launched after installation and after a device restart,
         // however for simplicity this demo app does this on each app start.
-        // It is assumed this completion handler has been called by a WebView displayed before the VTO WebView is needed.
-        if (!isPreWarmOfTensorflowModelComplete) {
-            vykingWebView?.evaluateJavascript("""
+        // It is assumed this completion handler has been called by a WKWebView before the VTO WKWebView is needed.
+        if (webView == preWarmTensorflowModelWebView && !isPreWarmOfTensorflowModelComplete) {
+            webView?.evaluateJavascript("""
             const preWarmTensorflowModel = (configUrl, configKey) => {
               import('https://sneaker-window.vyking.io/vyking-apparel/1/preWarmTensorflowModel.js')
                 .then(module => {
@@ -285,7 +322,14 @@ class WebViewActivity : AppCompatActivity() {
               })
             }
             preWarmTensorflowModel('${config}', '${key}')
-            """.trimIndent()) { value -> isPreWarmOfTensorflowModelComplete = true }
+            """.trimIndent()) {
+                value -> isPreWarmOfTensorflowModelComplete = true
+            }
+        } else {
+            webView?.evaluateJavascript("""
+        document.querySelector('vyking-apparel')?.setAttribute('config-key', '${key}');
+        document.querySelector('vyking-apparel')?.setAttribute('config', '${config}');
+      """.trimIndent(), resultCallback)
         }
     }
 
